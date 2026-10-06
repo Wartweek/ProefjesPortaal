@@ -970,14 +970,18 @@ function volgToegang(){
   },err=>{
     stopData();S.isAdmin=false;
     if(err.code==='permission-denied')S.auth='geentoegang';
-    else{S.auth='geentoegang';S.authErr='Kan de database niet bereiken: '+err.message}
+    else{S.auth='geentoegang';S.authErr=`Kan de database niet bereiken (${err.code}): ${err.message}`}
     render();
   }));
 }
-onAuthStateChanged(auth,u=>{
+onAuthStateChanged(auth,async u=>{
   stopAlles();S.user=u;S.isAdmin=false;S.authErr='';closeDrawer();
   if(!u){S.auth='uit';render();return}
-  if(!u.emailVerified){S.auth='verify';render();return}
+  S.auth='laden';render();
+  // Haal de nieuwste accountgegevens en een vers token op: een bewaard token kan nog
+  // 'e-mail niet bevestigd' bevatten, waardoor Firestore de toegang weigert
+  try{await u.reload();await u.getIdToken(true)}catch{}
+  if(!auth.currentUser?.emailVerified){S.auth='verify';render();return}
   volgToegang();
 });
 
