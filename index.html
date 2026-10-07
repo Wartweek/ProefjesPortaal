@@ -427,7 +427,7 @@ function vPlanner(){
   const cols=shown.map(d=>{
     const items=byDay(d);
     return `<div class="day ${d===t?'today':''}">
-      <div class="day-h"><span class="d">${esc(fmtDate(d))}</span><button class="addday" data-act="new-plan" data-datum="${d}" data-write aria-label="Inplannen op ${esc(fmtDate(d))}">+</button></div>
+      <div class="day-h"><span class="d">${esc(fmtDate(d))}</span>${magPlannenOp(d)?`<button class="addday" data-act="new-plan" data-datum="${d}" data-write aria-label="Inplannen op ${esc(fmtDate(d))}">+</button>`:''}</div>
       <div class="day-b">${items.length?items.map(slotHtml).join(''):'<span class="empty-day">—</span>'}</div>
     </div>`}).join('');
   return stats+leeg+head+`<div class="week" style="--days:${shown.length}">${cols}</div>`;
@@ -449,7 +449,7 @@ function vMaand(){
   html+='</div>';
   const items=byDay(S.dag);
   html+=`<section class="daypanel">
-    <div class="toolbar" style="margin:0"><h2 style="font-size:19px;text-transform:capitalize">${esc(fmtDate(S.dag,{weekday:'long',day:'numeric',month:'long'}))}</h2><span class="grow"></span><button class="btn" data-act="new-plan" data-datum="${S.dag}" data-write>+ Inplannen op deze dag</button></div>
+    <div class="toolbar" style="margin:0"><h2 style="font-size:19px;text-transform:capitalize">${esc(fmtDate(S.dag,{weekday:'long',day:'numeric',month:'long'}))}</h2><span class="grow"></span>${magPlannenOp(S.dag)?`<button class="btn" data-act="new-plan" data-datum="${S.dag}" data-write>+ Inplannen op deze dag</button>`:`<span class="muted" style="font-size:13px">Leden plannen vanaf ${esc(fmtDate(vroegsteLidDatum(),{day:'numeric',month:'short'}))}</span>`}</div>
     ${items.length?`<div class="grid">${items.map(slotHtml).join('')}</div>`:'<p class="muted" style="margin:0">Geen practica op deze dag.</p>'}
   </section>`;
   return html;
@@ -745,14 +745,23 @@ function editProef(id){
 }
 
 /* planning */
+// Leden plannen minstens 3 werkdagen (ma–vr) vooruit; admins mogen elke datum kiezen.
+// Dezelfde regel staat in firestore.rules.
+const WERKDAGEN_VOORUIT=3;
+function vroegsteLidDatum(){let d=new Date(),n=0;while(n<WERKDAGEN_VOORUIT){d=addDays(d,1);const w=d.getDay();if(w!==0&&w!==6)n++}return iso(d)}
+function magPlannenOp(ds){return S.isAdmin||ds>=vroegsteLidDatum()}
 function editPlan(id,pre={}){
   const p=id?S.planning.get(id):{datum:pre.datum||(S.view==='maand'?S.dag:iso(S.week<=new Date()&&new Date()<addDays(S.week,7)?new Date():S.week)),proefId:pre.proef||'',groepjes:''};
+  const vroegst=vroegsteLidDatum();
+  if(!id&&!S.isAdmin&&p.datum<vroegst)p.datum=vroegst;
+  const minAttr=!S.isAdmin&&(!id||p.datum>=vroegst)?` min="${vroegst}"`:'';
+  const hint=S.isAdmin?'':`<span class="muted" style="font-size:12px">Leden plannen vanaf ${esc(fmtDate(vroegst,{weekday:'short',day:'numeric',month:'short'}))} (${WERKDAGEN_VOORUIT} werkdagen vooruit).</span>`;
   const opts=Object.entries(VAKKEN).map(([k,v])=>{const ps=[...S.proeven.values()].filter(x=>x.vak===k).sort((a,b)=>a.titel.localeCompare(b.titel,'nl'));return ps.length?`<optgroup label="${v.label}">${ps.map(x=>`<option value="${esc(x.id)}" ${p.proefId===x.id?'selected':''}>${esc(x.titel)}${x.leerjaar?' · '+esc(x.leerjaar):''}</option>`).join('')}</optgroup>`:''}).join('');
   openDrawer(`<form id="plan-form" class="section" style="gap:18px;flex:1">
     <div class="drawer-h"><h2>${id?'Planning bewerken':'Practicum inplannen'}</h2><button type="button" class="x" data-close aria-label="Sluiten">×</button></div>
     <div class="fields">
       <div class="field full"><label class="label" for="p-proef">Proefje</label><select id="p-proef" required><option value="">Kies een proefje…</option>${opts}</select></div>
-      <div class="field"><label class="label" for="p-datum">Datum</label><input type="date" id="p-datum" required value="${esc(p.datum)}"></div>
+      <div class="field"><label class="label" for="p-datum">Datum</label><input type="date" id="p-datum" required value="${esc(p.datum)}"${minAttr}>${hint}</div>
       <div class="field"><label class="label" for="p-uur">Lesuur</label><input type="text" id="p-uur" value="${esc(p.lesuur||'')}" placeholder="Bijv. 3e uur"></div>
       <div class="field"><label class="label" for="p-klas">Klas</label><input type="text" id="p-klas" value="${esc(p.klas||'')}" placeholder="Bijv. 4H2"></div>
       <div class="field"><label class="label" for="p-lokaal">Lokaal</label><input type="text" id="p-lokaal" value="${esc(p.lokaal||'')}" placeholder="Bijv. B.104"></div>
@@ -769,6 +778,9 @@ function editPlan(id,pre={}){
       e.preventDefault();
       const data={proefId:$('#p-proef',d).value,datum:$('#p-datum',d).value,lesuur:$('#p-uur',d).value.trim(),klas:$('#p-klas',d).value.trim(),lokaal:$('#p-lokaal',d).value.trim(),docent:$('#p-docent',d).value.trim(),groepjes:Math.round(num($('#p-groep',d).value))||1,notitie:$('#p-notitie',d).value.trim(),afgeboekt:!!p.afgeboekt};
       if(!data.proefId||!data.datum)return;
+      if(!S.isAdmin&&(!id||data.datum!==p.datum)&&data.datum<vroegsteLidDatum()){
+        toast(`Leden kunnen pas inplannen vanaf ${fmtDate(vroegsteLidDatum(),{weekday:'long',day:'numeric',month:'long'})}. Vraag een admin voor een eerdere datum.`,true);
+        $('#p-datum',d).focus();return}
       const pid=id||S.db.collection('planning').doc().id;
       if(await write(()=>S.db.doc('planning/'+pid).set(id?{...(({id:_,...r})=>r)(p),...data}:data),'Ingepland')){closeDrawer();gaNaar(data.datum);if(S.tab!=='planner')setTab('planner');else render()}
     };
